@@ -25,10 +25,10 @@ const defaultManual = [
   { id: 5, desc: "Bonés Audazi", amount: 1840, type: "saida", cat: "Audazi/PJ", month: "2026-04" },
 ];
 
-async function dbLoad() {
-  try { const r = await window.storage.get(STORAGE_KEY); return r ? JSON.parse(r.value) : null; } catch { return null; }
+function dbLoad() {
+  try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
 }
-async function dbSave(d) { try { await window.storage.set(STORAGE_KEY, JSON.stringify(d)); } catch {} }
+function dbSave(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
 
 async function parsePDF(base64, cardLabel) {
   const extractResp = await fetch("/api/claude", {
@@ -122,12 +122,11 @@ export default function App() {
   const recRef = useRef(null);
 
   useEffect(() => {
-    dbLoad().then(d => {
-      if (!d) return;
-      if (d.caixa !== undefined) setCaixa(d.caixa);
-      if (d.manual) setManual(d.manual);
-      if (d.cardsData) setCardsData(d.cardsData);
-    });
+    const d = dbLoad();
+    if (!d) return;
+    if (d.caixa !== undefined) setCaixa(d.caixa);
+    if (d.manual) setManual(d.manual);
+    if (d.cardsData) setCardsData(d.cardsData);
   }, []);
 
   const persist = (updates) => {
