@@ -31,7 +31,7 @@ async function dbLoad() {
 async function dbSave(d) { try { await window.storage.set(STORAGE_KEY, JSON.stringify(d)); } catch {} }
 
 async function parsePDF(base64, cardLabel) {
-  const extractResp = await fetch("https://api.anthropic.com/v1/messages", {
+  const extractResp = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -45,7 +45,7 @@ async function parsePDF(base64, cardLabel) {
   const eData = await extractResp.json();
   const text = eData.content?.[0]?.text || "";
 
-  const parseResp = await fetch("https://api.anthropic.com/v1/messages", {
+  const parseResp = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -64,7 +64,7 @@ amount sempre positivo. audazi:true se parecer gasto de negócio/empresa.`,
 }
 
 async function chatAI(messages, context) {
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const resp = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
