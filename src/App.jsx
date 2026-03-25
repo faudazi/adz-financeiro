@@ -31,34 +31,20 @@ function dbLoad() {
 function dbSave(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
 
 async function parsePDF(base64, cardLabel) {
-  const extractResp = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514", max_tokens: 8000,
-      messages: [{ role: "user", content: [
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-        { type: "text", text: "Extraia todas as transações desta fatura. Retorne apenas o texto bruto com todas as linhas de transações, datas e valores." }
-      ]}]
-    }),
-  });
-  const eData = await extractResp.json();
-  const text = eData.content?.[0]?.text || "";
-
-  const parseResp = await fetch("/api/claude", {
+  const resp = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514", max_tokens: 4000,
-      system: `Parse fatura brasileira. Categorias: ${CATS.join(", ")}. 
-Retorne APENAS JSON válido sem markdown:
-{"transactions":[{"date":"DD/MM","desc":"nome limpo","amount":123.45,"cat":"Categoria","audazi":false}],"total":1234.56}
-amount sempre positivo. audazi:true se parecer gasto de negócio/empresa.`,
-      messages: [{ role: "user", content: `Fatura ${cardLabel}:\n${text.substring(0, 12000)}` }]
+      system: `Voce e um parser de faturas. Categorias: ${CATS.join(", ")}. Retorne APENAS JSON valido sem markdown: {"transactions":[{"date":"DD/MM","desc":"nome limpo","amount":123.45,"cat":"Categoria","audazi":false}],"total":1234.56} amount sempre positivo. audazi:true se gasto de negocio/empresa.`,
+      messages: [{ role: "user", content: [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+        { type: "text", text: `Extraia TODAS as transacoes desta fatura ${cardLabel} e retorne o JSON conforme instrucoes do sistema.` }
+      ]}]
     }),
   });
-  const pData = await parseResp.json();
-  const txt = pData.content?.[0]?.text || "{}";
+  const data = await resp.json();
+  const txt = data.content?.[0]?.text || "{}";
   try { return JSON.parse(txt.replace(/```json|```/g, "").trim()); }
   catch { return { transactions: [], total: 0 }; }
 }
