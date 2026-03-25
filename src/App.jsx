@@ -36,10 +36,10 @@ async function parsePDF(base64, cardLabel) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514", max_tokens: 4000,
-      system: `Voce e um parser de faturas. Categorias: ${CATS.join(", ")}. Retorne APENAS JSON valido sem markdown: {"transactions":[{"date":"DD/MM","desc":"nome limpo","amount":123.45,"cat":"Categoria","audazi":false}],"total":1234.56} amount sempre positivo. audazi:true se gasto de negocio/empresa.`,
+      system: `Parser de faturas brasileiras. Categorias: ${CATS.join(", ")}. Retorne APENAS JSON sem markdown: {"transactions":[{"date":"DD/MM","desc":"nome limpo","amount":123.45,"cat":"Categoria","audazi":false}],"total":1234.56} amount positivo. audazi:true se gasto empresarial.`,
       messages: [{ role: "user", content: [
         { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-        { type: "text", text: `Extraia TODAS as transacoes desta fatura ${cardLabel} e retorne o JSON conforme instrucoes do sistema.` }
+        { type: "text", text: `Extraia TODAS as transacoes desta fatura ${cardLabel} e retorne JSON conforme instrucoes.` }
       ]}]
     }),
   });
