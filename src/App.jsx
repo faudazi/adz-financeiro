@@ -211,7 +211,7 @@ export default function App() {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Syne:wght@700;800&display=swap');
-        html, body, #root { margin: 0; padding: 0; background: #fff; min-height: 100vh; }
+        html, body, #root { margin: 0; padding: 0; background: #f0f2f5; min-height: 100vh; width: 100%; }
         * { box-sizing: border-box; }
         button, input, select { font-family: inherit; }
         ::-webkit-scrollbar { width: 4px; }
@@ -224,16 +224,16 @@ export default function App() {
         .tab-btn:hover { background: #f5f5f5 !important; }
       `}</style>
 
-      <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div style={{ minHeight: "100vh", background: "#f0f2f5", fontFamily: "'DM Sans', system-ui, sans-serif", width: "100%" }}>
 
         {/* Header */}
-        <div style={{ background: "#fff", borderBottom: "1px solid #eee", padding: "0 40px" }}>
+        <div style={{ background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "0 40px", width: "100%" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
+              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, letterSpacing: -0.5, color: "#111" }}>
                 ADZ<span style={{ color: "#3b82f6" }}>.</span>FINANCEIRO
               </span>
-              <span style={{ fontSize: 11, color: "#bbb", letterSpacing: 3 }}>ABRIL 2026</span>
+              <span style={{ fontSize: 11, color: "#999", letterSpacing: 3 }}>ABRIL 2026</span>
             </div>
             <div style={{ display: "flex", gap: 2 }}>
               {TABS.map(([t, l]) => (
@@ -249,7 +249,7 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ padding: "28px 40px" }}>
+        <div style={{ padding: "24px 40px", width: "100%", maxWidth: "100%" }}>
 
           {/* ── LANÇAMENTOS MANUAIS ── */}
           {tab === "manual" && (
@@ -291,16 +291,16 @@ export default function App() {
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: "#333" }}>+ Novo lançamento</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Descrição" onKeyDown={e => e.key === "Enter" && addEntry()}
-                    style={{ flex: 2, minWidth: 160, padding: "9px 14px", border: "1px solid #eee", borderRadius: 8, fontSize: 13, outline: "none" }} />
+                    style={{ flex: 2, minWidth: 160, padding: "9px 14px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, outline: "none", background: "#fff", color: "#333" }} />
                   <input value={newAmount} onChange={e => setNewAmount(e.target.value)} placeholder="Valor" onKeyDown={e => e.key === "Enter" && addEntry()}
-                    style={{ flex: 1, minWidth: 100, padding: "9px 14px", border: "1px solid #eee", borderRadius: 8, fontSize: 13, outline: "none" }} />
+                    style={{ flex: 1, minWidth: 100, padding: "9px 14px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, outline: "none", background: "#fff", color: "#333" }} />
                   <select value={newType} onChange={e => setNewType(e.target.value)}
-                    style={{ padding: "9px 12px", border: "1px solid #eee", borderRadius: 8, fontSize: 13, cursor: "pointer", outline: "none" }}>
+                    style={{ padding: "9px 12px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, cursor: "pointer", outline: "none", background: "#fff", color: "#333" }}>
                     <option value="saida">Saída</option>
                     <option value="entrada">Entrada</option>
                   </select>
                   <select value={newCat} onChange={e => setNewCat(e.target.value)}
-                    style={{ padding: "9px 12px", border: "1px solid #eee", borderRadius: 8, fontSize: 13, cursor: "pointer", outline: "none" }}>
+                    style={{ padding: "9px 12px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, cursor: "pointer", outline: "none", background: "#fff", color: "#333" }}>
                     {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <button onClick={() => setNewFixo(f => !f)} style={{
@@ -325,7 +325,7 @@ export default function App() {
                     borderBottom: i < manual.length - 1 ? "1px solid #f5f5f5" : "none",
                     background: "#fff", transition: "background 0.1s",
                   }}>
-                    <div style={{ flex: 1, fontSize: 13, color: "#333" }}>{e.desc}</div>
+                    <div style={{ flex: 1, fontSize: 13, color: "#333", textAlign: "left" }}>{e.desc}</div>
                     {e.fixo && <span style={{ fontSize: 9, background: "#eff6ff", color: "#3b82f6", padding: "2px 6px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>🔁 FIXO</span>}
                     <div style={{ fontSize: 10, background: CAT_COLORS[e.cat] ? `${CAT_COLORS[e.cat]}20` : "#f0f0f0", color: CAT_COLORS[e.cat] || "#666", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>{e.cat}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: e.type === "entrada" ? "#22c55e" : "#ef4444", minWidth: 100, textAlign: "right" }}>
