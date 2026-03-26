@@ -48,32 +48,69 @@ function defaultState() {
 }
 
 async function parsePDF(base64, cardLabel, vencimento) {
-  const resp = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514", max_tokens: 4000,
-      system: `Parser de faturas brasileiras. Categorias: ${CATS.join(", ")}.
-Retorne APENAS JSON valido sem markdown:
-{
-  "transactions": [{"date":"DD/MM","desc":"nome limpo","amount":123.45,"cat":"Categoria","audazi":false}],
-  "total": 1234.56,
-  "parcelas": [{"desc":"Nome Estabelecimento","amount":102.46,"parcela_atual":2,"total_parcelas":3}]
-}
-- amount sempre positivo
-- audazi:true se gasto empresarial
-- Em parcelas: inclua TODAS as compras parceladas identificadas na fatura com seu numero de parcela atual e total
-- Exemplo de parcela: "Nomad Sports - Parcela 2/3" -> desc:"Nomad Sports", parcela_atual:2, total_parcelas:3`,
-      messages: [{ role: "user", content: [
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-        { type: "text", text: `Extraia TODAS as transacoes desta fatura ${cardLabel} (vencimento ${vencimento}) e identifique as compras parceladas. Retorne JSON conforme instrucoes.` }
-      ]}]
-    }),
-  });
-  const data = await resp.json();
-  const txt = data.content?.[0]?.text || "{}";
-  try { return JSON.parse(txt.replace(/```json|```/g, "").trim()); }
-  catch { return { transactions: [], total: 0, parcelas: [] }; }
+  try {
+    const resp = await fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514", max_tokens: 4000,
+        system: `Você é um parser de faturas de cartão de crédito brasileiro.
+Categorias disponíveis: ${CATS.join(", ")}.
+
+REGRAS ABSOLUTAS:
+1. Retorne SOMENTE JSON válido, sem texto antes ou depois, sem markdown, sem explicações
+2. Use EXATAMENTE esta estrutura:
+{"transactions":[{"date":"DD/MM","desc":"nome","amount":0.00,"cat":"Categoria","audazi":false}],"total":0.00,"parcelas":[{"desc":"Nome","amount":0.00,"parcela_atual":1,"total_parcelas":2}]}
+3. amount SEMPRE positivo (número, não string)
+4. Se não houver parcelas, retorne "parcelas":[]
+5. Se for uma mini fatura ou extrato resumido, extraia o que houver — mesmo que seja pouco
+6. Em parcelas: inclua TODAS as compras parceladas com seu número de parcela atual e total`,
+        messages: [{ role: "user", content: [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+          { type: "text", text: `Extraia TODAS as transações desta fatura do cartão ${cardLabel} com vencimento em ${vencimento}. Retorne apenas o JSON conforme instruído no system prompt.` }
+        ]}]
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("API error:", resp.status, errText);
+      throw new Error(`API retornou status ${resp.status}. Verifique a API key no Vercel.`);
+    }
+
+    const data = await resp.json();
+
+    // Log para debug no console do navegador
+    const rawText = data.content?.[0]?.text || "";
+    console.log("Claude raw response (primeiros 500 chars):", rawText.slice(0, 500));
+
+    if (!rawText) {
+      throw new Error("Claude não retornou texto. Verifique a API key ou o formato do PDF.");
+    }
+
+    // Extrai JSON mesmo que venha com texto ao redor ou markdown
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error(`Resposta não contém JSON válido.\n\nResposta recebida: "${rawText.slice(0, 200)}"`);
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Garante estrutura mínima e calcula total se não vier
+    const transactions = parsed.transactions || [];
+    const total = parsed.total || transactions.reduce((a, t) => a + (t.amount || 0), 0) || 0;
+
+    return {
+      transactions,
+      total,
+      parcelas: parsed.parcelas || [],
+    };
+
+  } catch (err) {
+    console.error("parsePDF error completo:", err);
+    // Re-lança o erro com mensagem útil para o alert
+    throw new Error(err.message || "Erro desconhecido ao processar o PDF.");
+  }
 }
 
 async function chatAI(messages, context) {
@@ -224,10 +261,17 @@ export default function App() {
       // Verificar se há parcelas previstas pra conciliação
       const previstas = (fluxoData[currentMonth]||[]).filter(f=>f.cardId===activeCard);
 
-      const parsed = await parsePDF(base64, card.label, MONTH_LABELS[currentMonth]);
+      // Tenta parsear — se falhar, mostra erro real
+      const parsed = await parsePDF(base64, card.label, MONTH_LABELS[currentMonth]).catch(err => {
+        alert(`❌ Erro ao ler fatura:\n\n${err.message}\n\n(Abra o console do navegador com F12 para mais detalhes)`);
+        setParsing(false);
+        return null;
+      });
+
+      if (!parsed) return;
 
       if (!parsed.transactions?.length) {
-        alert("Não foi possível ler a fatura. Tente um PDF mais simples.");
+        alert("⚠️ Fatura lida mas sem transações identificadas.\n\nIsso pode acontecer com mini faturas ou extratos resumidos. Tente com a fatura completa.");
         setParsing(false);
         return;
       }
@@ -258,7 +302,7 @@ export default function App() {
 
       // Distribui parcelas nos meses futuros
       const newFluxo = { ...fluxoData };
-      
+
       // Adiciona fatura como conta do mês atual
       if (!newFluxo[currentMonth]) newFluxo[currentMonth] = [];
       newFluxo[currentMonth] = newFluxo[currentMonth].filter(f=>f.cardId!==activeCard||f.source!=="fatura");
