@@ -53,7 +53,7 @@ async function parsePDF(base64, cardLabel, vencimento) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 4000,
+        model: "claude-sonnet-4-20250514", max_tokens: 8000,
         system: `Você é um parser de faturas de cartão de crédito brasileiro.
 Categorias disponíveis: ${CATS.join(", ")}.
 
