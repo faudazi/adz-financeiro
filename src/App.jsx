@@ -53,7 +53,7 @@ async function parsePDF(base64, cardLabel, vencimento) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 8000,
+        model: "claude-sonnet-4-20250514", max_tokens: 4000,
         system: `Você é um parser de faturas de cartão de crédito brasileiro.
 Categorias disponíveis: ${CATS.join(", ")}.
 
@@ -192,6 +192,83 @@ function Conciliacao({ previstas, realizadas, onClose }) {
   );
 }
 
+// ── FLUXO VIEW ───────────────────────────────────────────────────────────────
+function FluxoView({ fluxoData, currentMonth }) {
+  const [openMonth, setOpenMonth] = useState(null);
+
+  const mesesComDados = MONTHS.filter(m => m >= currentMonth && (fluxoData[m]||[]).length > 0);
+  const maxTotal = Math.max(...mesesComDados.map(m =>
+    (fluxoData[m]||[]).filter(i=>i.type==="saida").reduce((a,b)=>a+b.amount,0)
+  ), 1);
+
+  const cardInfo = (cardId) => CARDS.find(c=>c.id===cardId);
+
+  if (!mesesComDados.length) return (
+    <div style={{background:"#fff",borderRadius:14,padding:"48px 32px",textAlign:"center",border:"1px solid #eee"}}>
+      <div style={{fontSize:40,marginBottom:12}}>📈</div>
+      <div style={{fontSize:15,fontWeight:600,color:"#333"}}>Suba uma fatura para gerar o fluxo</div>
+      <div style={{fontSize:13,color:"#aaa",marginTop:6}}>As parcelas serão projetadas automaticamente nos meses seguintes</div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Resumo horizontal */}
+      <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:8,marginBottom:24}}>
+        {mesesComDados.map(m => {
+          const items = fluxoData[m]||[];
+          const total = items.filter(i=>i.type==="saida").reduce((a,b)=>a+b.amount,0);
+          const isOpen = openMonth === m;
+          return (
+            <div key={m} onClick={()=>setOpenMonth(isOpen?null:m)}
+              style={{minWidth:140,background:"#fff",border:`2px solid ${isOpen?"#3b82f6":"#eee"}`,borderRadius:14,padding:"16px 18px",cursor:"pointer",transition:"all 0.15s",flexShrink:0}}>
+              <div style={{fontSize:11,color:"#aaa",fontWeight:600,marginBottom:8,letterSpacing:1}}>{MONTH_LABELS[m].toUpperCase()}</div>
+              {/* Barra de proporção */}
+              <div style={{height:4,background:"#f0f0f0",borderRadius:2,marginBottom:10,overflow:"hidden"}}>
+                <div style={{height:"100%",borderRadius:2,background: total > maxTotal*0.7?"#ef4444": total > maxTotal*0.4?"#f59e0b":"#22c55e",width:`${(total/maxTotal)*100}%`,transition:"width 0.5s"}}/>
+              </div>
+              <div style={{fontSize:16,fontWeight:700,color:"#ef4444"}}>{fmt(total)}</div>
+              <div style={{fontSize:11,color:"#aaa",marginTop:4}}>{items.length} lançamento{items.length!==1?"s":""}</div>
+              <div style={{fontSize:11,color:isOpen?"#3b82f6":"#bbb",marginTop:6,textAlign:"right"}}>{isOpen?"▲ fechar":"▼ ver"}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Dropdown do mês aberto */}
+      {openMonth && (
+        <div style={{background:"#fff",border:"1px solid #eee",borderRadius:14,overflow:"hidden",marginBottom:16}}>
+          <div style={{padding:"16px 24px",borderBottom:"1px solid #f0f0f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:15,fontWeight:700}}>{MONTH_LABELS[openMonth]}</div>
+            <div style={{fontSize:20,fontWeight:700,color:"#ef4444"}}>
+              {fmt((fluxoData[openMonth]||[]).filter(i=>i.type==="saida").reduce((a,b)=>a+b.amount,0))}
+            </div>
+          </div>
+          {(fluxoData[openMonth]||[]).map((item,i) => {
+            const card = cardInfo(item.cardId);
+            return (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 24px",borderBottom:"1px solid #f9f9f9",background:"#fff"}}>
+                {/* Tag tipo */}
+                <span style={{fontSize:9,background:item.source==="fatura"?"#fef2f2":item.source==="parcela"?"#eff6ff":"#f5f5f5",color:item.source==="fatura"?"#ef4444":item.source==="parcela"?"#3b82f6":"#666",padding:"2px 7px",borderRadius:4,fontWeight:700,flexShrink:0,letterSpacing:0.5}}>
+                  {item.source==="fatura"?"FATURA":item.source==="parcela"?"PARCELA":"MANUAL"}
+                </span>
+                {/* Tag cartão */}
+                {card && (
+                  <span style={{fontSize:9,background:`${card.color}15`,color:card.color,padding:"2px 7px",borderRadius:4,fontWeight:700,flexShrink:0,letterSpacing:0.5}}>
+                    {card.id==="itau"?"ITAÚ":"NUBANK"}
+                  </span>
+                )}
+                <span style={{flex:1,fontSize:13,color:"#333"}}>{item.desc}</span>
+                <span style={{fontSize:13,fontWeight:700,color:"#ef4444"}}>{fmt(item.amount)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState(null);
@@ -303,9 +380,15 @@ export default function App() {
       // Distribui parcelas nos meses futuros
       const newFluxo = { ...fluxoData };
 
+      // Limpa TUDO deste cartão em todos os meses (evita duplicatas ao trocar PDF)
+      Object.keys(newFluxo).forEach(mes => {
+        newFluxo[mes] = (newFluxo[mes] || []).filter(
+          f => !(f.cardId === activeCard && (f.source === "parcela" || f.source === "fatura"))
+        );
+      });
+
       // Adiciona fatura como conta do mês atual
       if (!newFluxo[currentMonth]) newFluxo[currentMonth] = [];
-      newFluxo[currentMonth] = newFluxo[currentMonth].filter(f=>f.cardId!==activeCard||f.source!=="fatura");
       newFluxo[currentMonth].push(faturaEntry);
 
       // Distribui parcelas futuras
@@ -315,8 +398,6 @@ export default function App() {
           for (let i = 1; i <= restantes; i++) {
             const mes = addMonths(currentMonth, i);
             if (!newFluxo[mes]) newFluxo[mes] = [];
-            // Remove duplicata se existir
-            newFluxo[mes] = newFluxo[mes].filter(f=>f.desc!==`${p.desc} - Parcela ${p.parcela_atual+i}/${p.total_parcelas}`);
             newFluxo[mes].push({
               id: Date.now() + i,
               desc: `${p.desc} - Parcela ${p.parcela_atual+i}/${p.total_parcelas}`,
@@ -581,40 +662,7 @@ export default function App() {
 
           {/* ── FLUXO DE CAIXA ── */}
           {tab==="fluxo" && (
-            <div>
-              <div style={{marginBottom:20,fontSize:13,color:"#666"}}>
-                Projeção dos próximos meses com faturas e parcelas identificadas automaticamente.
-              </div>
-              {MONTHS.filter(m=>m>=currentMonth).map(m=>{
-                const items = fluxoData[m]||[];
-                const total = items.filter(i=>i.type==="saida").reduce((a,b)=>a+b.amount,0);
-                if (!items.length) return null;
-                return (
-                  <div key={m} style={{background:"#fff",border:"1px solid #eee",borderRadius:14,padding:"20px 24px",marginBottom:16}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-                      <div style={{fontSize:15,fontWeight:700,color:"#333"}}>{MONTH_LABELS[m]}</div>
-                      <div style={{fontSize:20,fontWeight:700,color:"#ef4444"}}>{fmt(total)}</div>
-                    </div>
-                    {items.map((item,i)=>(
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:"1px solid #f5f5f5"}}>
-                        <span style={{fontSize:10,background:item.source==="fatura"?"#fef2f2":item.source==="parcela"?"#eff6ff":"#f5f5f5",color:item.source==="fatura"?"#ef4444":item.source==="parcela"?"#3b82f6":"#666",padding:"2px 8px",borderRadius:4,fontWeight:600,flexShrink:0}}>
-                          {item.source==="fatura"?"FATURA":item.source==="parcela"?"PARCELA":"MANUAL"}
-                        </span>
-                        <span style={{flex:1,fontSize:13,color:"#333"}}>{item.desc}</span>
-                        <span style={{fontSize:13,fontWeight:600,color:"#ef4444"}}>{fmt(item.amount)}</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })}
-              {!MONTHS.filter(m=>m>=currentMonth).some(m=>(fluxoData[m]||[]).length>0)&&(
-                <div style={{background:"#fff",borderRadius:14,padding:"48px 32px",textAlign:"center",border:"1px solid #eee"}}>
-                  <div style={{fontSize:40,marginBottom:12}}>📈</div>
-                  <div style={{fontSize:15,fontWeight:600,color:"#333"}}>Suba uma fatura para gerar o fluxo</div>
-                  <div style={{fontSize:13,color:"#aaa",marginTop:6}}>As parcelas serão projetadas automaticamente nos meses seguintes</div>
-                </div>
-              )}
-            </div>
+            <FluxoView fluxoData={fluxoData} currentMonth={currentMonth} />
           )}
 
           {/* ── AGENTE ── */}
