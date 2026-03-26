@@ -53,7 +53,7 @@ async function parsePDF(base64, cardLabel, vencimento) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 16000,
+        model: "claude-sonnet-4-20250514", max_tokens: 4000,
         system: `Você é um parser de faturas de cartão de crédito brasileiro.
 Categorias disponíveis: ${CATS.join(", ")}.
 
@@ -111,6 +111,83 @@ REGRAS ABSOLUTAS:
     // Re-lança o erro com mensagem útil para o alert
     throw new Error(err.message || "Erro desconhecido ao processar o PDF.");
   }
+}
+
+// ── CSV PARSER (local, sem API, sem timeout) ─────────────────────────────────
+const CAT_RULES = [
+  { cat: "Alimentação", keys: ["restaur","lanche","cafe","padaria","pizz","burger","hamburgu","sushi","acai","galeto","bistro","pub","cervej","drink","comida","aliment","mercearia","supermercado","snack","grill","sorvete","confeit","rotisser","sanduiche","smoothie"] },
+  { cat: "Transporte", keys: ["metro","uber","99app","cabify","passaro","aguia branca","gol linhas","latam","azul","onibus","taxi","combustiv","posto","shell","petrobras","ipiranga","parking","estacion"] },
+  { cat: "Saúde", keys: ["drogaria","farmacia","raia","droga","medic","clinica","hospital","dentist","otica","therafit","academia","gym","pilates","nutri"] },
+  { cat: "Assinaturas", keys: ["apple","netflix","spotify","amazon","google","microsoft","adobe","shopify","eduzz","hotmart","kiwify","canva","figma","slack","zoom","applecombill","apple.com","ebn","htm*editor"] },
+  { cat: "Vestuário", keys: ["riachuelo","renner","zara","shein","amaro","farm","arezzo","nike","adidas","puma","lacoste","reserva","modas","laser modas","jim.com","teo espor"] },
+  { cat: "Viagem", keys: ["airbnb","hotel","pousada","hostel","booking","decolar","cvc","aeroporto"] },
+  { cat: "Audazi/PJ", keys: ["audazi","adz","sociorei","ig*llplanejamen","htm*editor pro"] },
+  { cat: "Casa", keys: ["mobil","movel","decoracao","leroy","construc","eletrodom","magazine","americanas","casas bahia"] },
+];
+
+function autoCateg(desc) {
+  const d = desc.toLowerCase();
+  for (const rule of CAT_RULES) {
+    if (rule.keys.some(k => d.includes(k))) return rule.cat;
+  }
+  return "Outro";
+}
+
+function parseCSVText(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const dataLines = lines.slice(1).filter(l => {
+    const lower = l.toLowerCase();
+    return !lower.startsWith("data") && !lower.includes("controle de saldo") && !lower.includes("pagamento efetuado") && !lower.includes("iof compra");
+  });
+
+  const transactions = [];
+  const parcelas = [];
+
+  for (const line of dataLines) {
+    const firstComma = line.indexOf(",");
+    const lastComma = line.lastIndexOf(",");
+    if (firstComma === -1 || lastComma === firstComma) continue;
+
+    const dateStr = line.slice(0, firstComma).trim();
+    const lancamento = line.slice(firstComma + 1, lastComma).trim();
+    const valorStr = line.slice(lastComma + 1).trim();
+    const amount = parseFloat(valorStr);
+    if (isNaN(amount) || amount <= 0) continue;
+
+    const dateParts = dateStr.split("-");
+    const date = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}` : dateStr;
+
+    // Detecta parcela: padrão "NOME 02/05" ou "NOME02/05"
+    const parcelaMatch = lancamento.match(/^(.+?)\s*(\d{2})\/(\d{2})\s*(.*)$/);
+    let desc = lancamento;
+    let parcelaAtual = null;
+    let totalParcelas = null;
+
+    if (parcelaMatch) {
+      const pa = parseInt(parcelaMatch[2]);
+      const pt = parseInt(parcelaMatch[3]);
+      if (pt > 1 && pa <= pt && pa >= 1) {
+        desc = (parcelaMatch[1] + " " + (parcelaMatch[4] || "")).trim();
+        parcelaAtual = pa;
+        totalParcelas = pt;
+      }
+    }
+
+    // Remove cidade/país do final (ex: "NOME          CIDADE  BRA")
+    desc = desc.replace(/\s{2,}[A-Z\s]{4,}\s+(BRA|IRL|USA|ARG|ESP|PRT)\s*$/i, "").trim();
+    desc = desc.replace(/\s{3,}/g, " ").trim();
+
+    const cat = autoCateg(desc);
+    const audazi = cat === "Audazi/PJ";
+    transactions.push({ date, desc, amount, cat, audazi });
+
+    if (parcelaAtual !== null) {
+      parcelas.push({ desc, amount, parcela_atual: parcelaAtual, total_parcelas: totalParcelas });
+    }
+  }
+
+  const total = Math.round(transactions.reduce((a, t) => a + t.amount, 0) * 100) / 100;
+  return { transactions, total, parcelas };
 }
 
 async function chatAI(messages, context) {
@@ -287,6 +364,7 @@ export default function App() {
   const [newCat, setNewCat] = useState("Fixo");
   const [newFixo, setNewFixo] = useState(false);
   const fileRef = useRef(null);
+  const csvRef = useRef(null);
   const chatRef = useRef(null);
   const recRef = useRef(null);
 
@@ -330,15 +408,36 @@ export default function App() {
     if (!file) return;
     setParsing(true);
 
+    const isCSV = file.name.toLowerCase().endsWith(".csv");
+
+    if (isCSV) {
+      // CSV: parse local, sem API, sem timeout
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = parseCSVText(reader.result);
+          if (!parsed.transactions?.length) {
+            alert("⚠️ Nenhuma transação encontrada no CSV.");
+            setParsing(false);
+            return;
+          }
+          applyParsedFatura(parsed, file.name);
+        } catch (err) {
+          alert(`❌ Erro ao ler CSV:\n${err.message}`);
+          setParsing(false);
+        }
+      };
+      reader.readAsText(file, "UTF-8");
+      return;
+    }
+
+    // PDF: usa API Claude
     const reader = new FileReader();
     reader.onload = async () => {
       const base64 = reader.result.split(",")[1];
       const card = CARDS.find(c=>c.id===activeCard);
-
-      // Verificar se há parcelas previstas pra conciliação
       const previstas = (fluxoData[currentMonth]||[]).filter(f=>f.cardId===activeCard);
 
-      // Tenta parsear — se falhar, mostra erro real
       const parsed = await parsePDF(base64, card.label, MONTH_LABELS[currentMonth]).catch(err => {
         alert(`❌ Erro ao ler fatura:\n\n${err.message}\n\n(Abra o console do navegador com F12 para mais detalhes)`);
         setParsing(false);
@@ -346,25 +445,31 @@ export default function App() {
       });
 
       if (!parsed) return;
-
       if (!parsed.transactions?.length) {
-        alert("⚠️ Fatura lida mas sem transações identificadas.\n\nIsso pode acontecer com mini faturas ou extratos resumidos. Tente com a fatura completa.");
+        alert("⚠️ Fatura lida mas sem transações identificadas.\n\nTente o arquivo CSV exportado pelo app do Itaú.");
         setParsing(false);
         return;
       }
 
-      // Atualiza cardsData do mês atual
-      const updatedMonthData = {
-        ...(state.months[currentMonth]||{}),
-        cardsData: {
-          ...(monthData.cardsData||{}),
-          [activeCard]: {
-            transactions: parsed.transactions||[],
-            total: parsed.total||0,
-            fileName: file.name,
-          }
+      applyParsedFatura(parsed, file.name, previstas);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function applyParsedFatura(parsed, fileName, previstas = []) {
+    const card = CARDS.find(c=>c.id===activeCard);
+
+    const updatedMonthData = {
+      ...(state.months[currentMonth]||{}),
+      cardsData: {
+        ...(monthData.cardsData||{}),
+        [activeCard]: {
+          transactions: parsed.transactions||[],
+          total: parsed.total||0,
+          fileName,
         }
-      };
+      }
+    };
 
       // Gera entradas no fluxo para o total da fatura (conta a pagar no mês de vencimento)
       const faturaEntry = {
@@ -426,9 +531,7 @@ export default function App() {
         });
       }
 
-      setParsing(false);
-    };
-    reader.readAsDataURL(file);
+    setParsing(false);
   }
 
   function removeEntry(id) {
@@ -604,11 +707,28 @@ export default function App() {
               </div>
 
               {!cardData&&!parsing&&(
-                <div onClick={()=>fileRef.current?.click()} style={{border:"2px dashed #ddd",borderRadius:16,padding:"56px 32px",textAlign:"center",cursor:"pointer",background:"#fff",transition:"all 0.2s"}}>
-                  <div style={{fontSize:48,marginBottom:14}}>📄</div>
-                  <div style={{fontSize:17,fontWeight:600,color:"#333",marginBottom:6}}>Sobe a fatura {CARDS.find(c=>c.id===activeCard)?.label} em PDF</div>
-                  <div style={{fontSize:13,color:"#aaa"}}>O agente lê, categoriza e projeta as parcelas automaticamente</div>
+                <div style={{background:"#fff",borderRadius:16,border:"1px solid #eee",overflow:"hidden"}}>
+                  <div style={{padding:"28px 32px 20px",textAlign:"center"}}>
+                    <div style={{fontSize:40,marginBottom:10}}>📂</div>
+                    <div style={{fontSize:16,fontWeight:700,color:"#333",marginBottom:4}}>Sobe a fatura {CARDS.find(c=>c.id===activeCard)?.label}</div>
+                    <div style={{fontSize:13,color:"#aaa",marginBottom:24}}>Escolha o formato que você tem disponível</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,maxWidth:420,margin:"0 auto"}}>
+                      <div onClick={()=>fileRef.current?.click()} style={{border:"2px dashed #ddd",borderRadius:12,padding:"20px 16px",cursor:"pointer",transition:"all 0.15s",textAlign:"center"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor="#3b82f6"} onMouseLeave={e=>e.currentTarget.style.borderColor="#ddd"}>
+                        <div style={{fontSize:28,marginBottom:8}}>📄</div>
+                        <div style={{fontSize:13,fontWeight:600,color:"#333",marginBottom:4}}>Mini Fatura PDF</div>
+                        <div style={{fontSize:11,color:"#aaa",lineHeight:1.4}}>PDF simplificado gerado pelo app do Itaú</div>
+                      </div>
+                      <div onClick={()=>csvRef.current?.click()} style={{border:"2px dashed #ddd",borderRadius:12,padding:"20px 16px",cursor:"pointer",transition:"all 0.15s",textAlign:"center"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor="#22c55e"} onMouseLeave={e=>e.currentTarget.style.borderColor="#ddd"}>
+                        <div style={{fontSize:28,marginBottom:8}}>📊</div>
+                        <div style={{fontSize:13,fontWeight:600,color:"#333",marginBottom:4}}>Fatura Completa CSV</div>
+                        <div style={{fontSize:11,color:"#aaa",lineHeight:1.4}}>CSV exportado pelo app ou site do Itaú — sem limite de tamanho</div>
+                      </div>
+                    </div>
+                  </div>
                   <input ref={fileRef} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
+                  <input ref={csvRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
                 </div>
               )}
 
